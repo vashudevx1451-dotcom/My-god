@@ -24,14 +24,13 @@ session.mount("https://", adapter)
 session.mount("http://", adapter)
 apihelper.SESSION_TIME_TO_LIVE = None
 
-# Token securely fetched from GitHub Secrets (NO LEAK)
-BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN", "").strip() or os.environ.get("BOT_TOKEN", "").strip()
+BOT_TOKEN = (os.environ.get("TELEGRAM_BOT_TOKEN", "").strip() or os.environ.get("BOT_TOKEN", "").strip()).strip("\"' ")
+MAX_RUNTIME_SECONDS = int(os.environ.get("MAX_RUNTIME_SECONDS", str(5 * 3600 + 25 * 60)))
+
 if not BOT_TOKEN:
-    raise ValueError("Missing TELEGRAM_BOT_TOKEN or BOT_TOKEN! Please add your new Bot Token in GitHub Repository Secrets.")
+    print("⚠️ WARNING: BOT_TOKEN is empty! Please set BOT_TOKEN in your GitHub Secrets.")
 
-MAX_RUNTIME_SECONDS = int(os.environ.get("MAX_RUNTIME_SECONDS", str(5 * 3600 + 25 * 60)))  # 5h 25m auto-exit for GitHub Actions
-
-bot = telebot.TeleBot(BOT_TOKEN, threaded=True, num_threads=8)
+bot = telebot.TeleBot(BOT_TOKEN or "EMPTY_TOKEN", threaded=True, num_threads=8)
 
 # ============================================================================
 # 2. CLEANER & UNICODE SANS-SERIF BOLD ENGINE
@@ -50,172 +49,134 @@ EMOJI_PATTERN = re.compile(
 )
 
 WATERMARK_KEYWORDS = [
-    "mad x abhi",
-    "madxabhi",
-    "𓊈𒆜 🄼🄰🄳 乂 🄰🄱🄷🄸 𒆜𓊉",
-    "powered by",
-    "extracted by",
-    "uploaded by",
-    "t.me/",
-    "telegram.me/",
-    "http://",
-    "https://",
-    "join channel",
-    "subscribe",
-    "credit"
-]
-
-FILENAME_BLOCKED_TOKENS = [
-    "_MadXABhi",
-    "-MadXABhi",
+    "Powered by",
+    "Extracted by",
+    "Downloaded by",
+    "Uploaded by",
+    "Provided by",
+    "Leaked by",
     "MadXABhi",
-    "mad_x_abhi",
-    "mad x abhi",
-    "@MadXABhi"
+    "Mad X Abhi",
+    "AS MULTIVERSE",
+    "𓊈",
+    "𓊉",
+    "𒆜",
+    "★",
+    "⚡",
+    "🔥",
 ]
 
-# Instant memory cache: (file_unique_id, clean_name) -> renamed_telegram_file_id
-RENAMED_FILE_CACHE = {}
-LAST_DOC_BY_CHAT = {}
+SANS_BOLD_MAP = {
+    "A": "𝗔", "B": "𝗕", "C": "𝗖", "D": "𝗗", "E": "𝗘", "F": "𝗙", "G": "𝗚",
+    "H": "𝗛", "I": "𝗜", "J": "𝗝", "K": "𝗞", "L": "𝗟", "M": "𝗠", "N": "𝗡",
+    "O": "𝗢", "P": "𝗣", "Q": "𝗤", "R": "𝗥", "S": "𝗦", "T": "𝗧", "U": "𝗨",
+    "V": "𝗩", "W": "𝗪", "X": "𝗫", "Y": "𝗬", "Z": "𝗭",
+    "a": "𝗮", "b": "𝗯", "c": "𝗰", "d": "𝗱", "e": "𝗲", "f": "𝗳", "g": "𝗴",
+    "h": "𝗵", "i": "𝗶", "j": "𝗷", "k": "𝗸", "l": "𝗹", "m": "𝗺", "n": "𝗻",
+    "o": "𝗼", "p": "𝗽", "q": "𝗾", "r": "𝗿", "s": "𝘀", "t": "𝘁", "u": "𝘂",
+    "v": "𝘃", "w": "𝘄", "x": "𝘅", "y": "𝘆", "z": "𝘇",
+    "0": "𝟬", "1": "𝟭", "2": "𝟮", "3": "𝟯", "4": "𝟰", "5": "𝟱", "6": "𝟲",
+    "7": "𝟳", "8": "𝟴", "9": "𝟵",
+}
 
 def to_sans_bold(text: str) -> str:
-    out = []
-    for ch in text:
-        cp = ord(ch)
-        if 65 <= cp <= 90:
-            out.append(chr(0x1D5D4 + (cp - 65)))
-        elif 97 <= cp <= 122:
-            out.append(chr(0x1D5EE + (cp - 97)))
-        elif 48 <= cp <= 57:
-            out.append(chr(0x1D7EC + (cp - 48)))
-        else:
-            out.append(ch)
-    return "".join(out)
+    if not text:
+        return ""
+    return "".join(SANS_BOLD_MAP.get(ch, ch) for ch in text)
 
-def normalize_styled_unicode(text: str) -> str:
-    out = []
-    for ch in text:
-        cp = ord(ch)
-        if 0x1D5D4 <= cp <= 0x1D5ED:
-            out.append(chr(65 + (cp - 0x1D5D4)))
-        elif 0x1D5EE <= cp <= 0x1D607:
-            out.append(chr(97 + (cp - 0x1D5EE)))
-        elif 0x1D7EC <= cp <= 0x1D7F5:
-            out.append(chr(48 + (cp - 0x1D7EC)))
-        else:
-            out.append(ch)
-    return "".join(out)
+def remove_links_and_usernames(text: str) -> str:
+    if not text:
+        return ""
+    text = re.sub(r"https?://\S+", "", text, flags=re.IGNORECASE)
+    text = re.sub(r"t\.me/\S+", "", text, flags=re.IGNORECASE)
+    text = re.sub(r"@\w+", "", text)
+    return text.strip()
 
-def smart_title_case(text: str) -> str:
-    def repl(m):
-        w = m.group(0)
-        if len(w) >= 2 and w.isupper():
-            return w
-        return w[0].upper() + w[1:].lower()
-    return re.sub(r"[A-Za-z0-9’']+", repl, text)
-
-def strip_emojis(text: str) -> str:
-    text = EMOJI_PATTERN.sub("", text)
-    return re.sub(r"[𓊈𓊉𒆜乂]", "", text)
-
-def clean_title_value(raw_title: str) -> str:
-    text = normalize_styled_unicode(strip_emojis(raw_title))
-    for tok in FILENAME_BLOCKED_TOKENS:
-        if tok.strip():
-            text = re.sub(r"[\s_\-|]*" + re.escape(tok.strip()), "", text, flags=re.IGNORECASE)
-    text = re.sub(r"[\s_\-|]*mad\s*x?\s*abhi", "", text, flags=re.IGNORECASE)
-    text = re.sub(
-        r"(?:\s*[-|–—_]\s*)?(?:\b(?:144|240|360|480|720|1080|1440|2160)p\b)?\s*\.(?:mp4|mkv|avi|mov|webm|flv|m4v|pdf|zip|rar)\b",
-        "",
-        text,
-        flags=re.IGNORECASE,
-    )
-    text = re.sub(
-        r"(?:\s*[-|–—_]\s*|\s+)\b(?:144|240|360|480|720|1080|1440|2160)p\b\s*$",
-        "",
-        text,
-        flags=re.IGNORECASE,
-    )
-    text = re.sub(r"\.(?:mp4|mkv|avi|mov|webm|pdf)\b", "", text, flags=re.IGNORECASE)
-    text = re.sub(r"\b(and|or|the|of|in|to|for|with|by)\s+\1\b", r"\1", text, flags=re.IGNORECASE)
-    text = re.sub(r"\band\b", "&", text, flags=re.IGNORECASE)
-    text = re.sub(r"[\s\-|–—_]+$", "", re.sub(r"[_\s]{2,}", " ", text)).strip()
-    return smart_title_case(text)
-
-def clean_pdf_filename(raw_name: str, fallback_title: str = "") -> tuple[str, bool]:
-    if not raw_name or not raw_name.strip():
-        safe = re.sub(r'[\\/:*?"<>|]', "", fallback_title or "Class_Notes").strip()
-        return f"{safe}.pdf", True
-
-    orig = raw_name.strip()
-    m = re.search(r"(\.[a-zA-Z0-9]{2,5})$", orig)
-    ext = m.group(1) if m else ".pdf"
-    base = orig[:-len(ext)] if m else orig
-    base = normalize_styled_unicode(strip_emojis(base))
-
-    for tok in FILENAME_BLOCKED_TOKENS:
-        if tok.strip():
-            base = re.sub(r"[\s_\-|]*" + re.escape(tok.strip()) + r"[\s_\-|]*", " ", base, flags=re.IGNORECASE)
-
-    base = re.sub(r"[\s_\-|]*mad\s*x?\s*abhi[\s_\-|]*", " ", base, flags=re.IGNORECASE)
-
-    if not base and fallback_title:
-        base = re.sub(r'[\\/:*?"<>|]', "", fallback_title).strip()
-
-    clean_name = f"{base or 'Class_Notes'}{ext}"
-    return clean_name, (clean_name != orig)
-
-def is_watermark_line(line: str) -> bool:
-    s = normalize_styled_unicode(line.strip())
-    if not s:
-        return False
-    if re.search(r"[𓊈𓊉𒆜乂【】『』〖〗༺༻꧁꧂]", s):
-        return True
-    if re.match(r"^\W*(?:powered\s*by|extracted\s*by|uploaded\s*by|downloaded\s*by|provided\s*by|leaked\s*by|credit\s*:)", s, re.IGNORECASE):
-        return True
-    low = s.lower()
+def strip_promotional_noise(text: str) -> str:
+    if not text:
+        return ""
     for kw in WATERMARK_KEYWORDS:
-        ckw = kw.strip().lower()
-        if ckw == "🚩" and re.match(r"^(?:🚩|\s)*(?:title|subject|topic)\s*:", s, re.IGNORECASE):
-            continue
-        if ckw and ckw in low:
-            return True
-    return False
+        text = re.sub(re.escape(kw) + r"[^\n]*", "", text, flags=re.IGNORECASE)
+    return text.strip()
+
+def clean_title_value(val: str) -> str:
+    if not val:
+        return ""
+    val = re.sub(r"^(?:Title\s*:?\s*)+", "", val, flags=re.IGNORECASE).strip()
+    val = remove_links_and_usernames(val)
+    val = strip_promotional_noise(val)
+    val = re.sub(r"\.[a-zA-Z0-9]{2,5}$", "", val).strip()
+    val = re.sub(r"[_\-]+", " ", val)
+    val = re.sub(r"\s+", " ", val).strip()
+    return val
+
+def clean_subject_value(val: str) -> str:
+    if not val:
+        return ""
+    val = re.sub(r"^(?:Subject\s*:?\s*)+", "", val, flags=re.IGNORECASE).strip()
+    val = remove_links_and_usernames(val)
+    val = strip_promotional_noise(val)
+    val = re.sub(r"\s+", " ", val).strip()
+    return val
+
+def clean_pdf_filename(raw_filename: str, extracted_title: str = "") -> tuple[str, bool]:
+    if not raw_filename:
+        raw_filename = f"{extracted_title}.pdf" if extracted_title else "Document.pdf"
+
+    original = raw_filename
+    name = raw_filename
+    ext = ".pdf"
+    m = re.search(r"(\.[a-zA-Z0-9]{2,5})$", name)
+    if m:
+        ext = m.group(1)
+        name = name[: m.start()]
+
+    name = remove_links_and_usernames(name)
+    name = strip_promotional_noise(name)
+    name = EMOJI_PATTERN.sub("", name)
+    name = re.sub(r"^\[.*?\]\s*", "", name)
+    name = re.sub(r"\s*\[.*?\]$", "", name)
+    name = re.sub(r"[\(\)\{\}\<\>\|#\*~`!@\$%\^&+=]+", " ", name)
+    name = re.sub(r"[_\-]+", " ", name)
+    name = re.sub(r"\s+", " ", name).strip()
+
+    if not name and extracted_title:
+        name = clean_title_value(extracted_title)
+
+    if not name:
+        name = "Document"
+
+    final_name = f"{name}{ext}"
+    return final_name, (final_name != original)
 
 def format_caption(raw_text: str, fallback_filename: str = "") -> tuple[str, str]:
-    lines = (raw_text or "").replace("\r\n", "\n").split("\n")
-    title, subject, others = "", "", []
+    if not raw_text and not fallback_filename:
+        return "", ""
 
-    for raw_line in lines:
-        s = raw_line.strip()
-        if not s:
-            continue
-        ascii_line = normalize_styled_unicode(s)
+    lines = [ln.strip() for ln in (raw_text or "").split("\n") if ln.strip()]
+    title = ""
+    subject = ""
+    others = []
 
-        tm = re.match(r"^\W*Title\s*:\s*(.*)$", ascii_line, re.IGNORECASE)
-        if tm:
-            title = clean_title_value(tm.group(1))
-            continue
-
-        sm = re.match(r"^\W*Subject\s*:\s*(.*)$", ascii_line, re.IGNORECASE)
-        if sm:
-            subject = re.sub(r"\s{2,}", " ", normalize_styled_unicode(strip_emojis(sm.group(1)))).strip()
+    for line in lines:
+        cleaned_line = remove_links_and_usernames(line)
+        cleaned_line = strip_promotional_noise(cleaned_line)
+        cleaned_line = EMOJI_PATTERN.sub("", cleaned_line).strip()
+        if not cleaned_line:
             continue
 
-        topm = re.match(r"^\W*Topic\s*:\s*(.*)$", ascii_line, re.IGNORECASE)
-        if topm:
-            # Topic line is completely stripped as requested
-            continue
-
-        if re.match(r"^\W*(?:quality|resolution|video\s*quality)\s*[:\-]", ascii_line, re.IGNORECASE):
-            continue
-
-        if is_watermark_line(raw_line):
-            continue
-
-        cleaned_other = clean_title_value(raw_line)
-        if cleaned_other:
-            others.append(cleaned_other)
+        if re.match(r"^Title\s*:", cleaned_line, re.IGNORECASE):
+            raw_v = re.sub(r"^Title\s*:?\s*", "", cleaned_line, flags=re.IGNORECASE).strip()
+            title = clean_title_value(raw_v)
+        elif re.match(r"^Subject\s*:", cleaned_line, re.IGNORECASE):
+            raw_v = re.sub(r"^Subject\s*:?\s*", "", cleaned_line, flags=re.IGNORECASE).strip()
+            subject = clean_subject_value(raw_v)
+        elif not title and len(lines) == 1 and not re.search(r"^[A-Za-z]+:", cleaned_line):
+            title = clean_title_value(cleaned_line)
+        else:
+            cleaned_other = re.sub(r"\s+", " ", cleaned_line).strip()
+            if cleaned_other:
+                others.append(cleaned_other)
 
     if not title and fallback_filename:
         title = clean_title_value(fallback_filename)
@@ -230,8 +191,10 @@ def format_caption(raw_text: str, fallback_filename: str = "") -> tuple[str, str
 
     return "\n\n".join(parts), title
 
-# Direct Fast Download & Upload (Pehle jaisa - No slow progress bar messages)
-def send_renamed_pdf_fast(chat_id, file_id, file_unique_id, clean_name, caption):
+RENAMED_FILE_CACHE = {}
+LAST_DOC_BY_CHAT = {}
+
+def send_renamed_pdf_fast(chat_id, file_id, file_unique_id, clean_name, caption, file_size=0):
     cache_key = f"{file_unique_id}::{clean_name}" if file_unique_id else None
     if cache_key and cache_key in RENAMED_FILE_CACHE:
         try:
@@ -243,9 +206,8 @@ def send_renamed_pdf_fast(chat_id, file_id, file_unique_id, clean_name, caption)
     try:
         file_info = bot.get_file(file_id)
         dl_url = f"https://api.telegram.org/file/bot{BOT_TOKEN}/{file_info.file_path}"
-        resp = session.get(dl_url, timeout=30)
+        resp = session.get(dl_url, timeout=40)
         resp.raise_for_status()
-
         bio = io.BytesIO(resp.content)
         bio.name = clean_name
 
@@ -254,40 +216,138 @@ def send_renamed_pdf_fast(chat_id, file_id, file_unique_id, clean_name, caption)
             bio,
             caption=caption,
             visible_file_name=clean_name,
-            timeout=35
+            timeout=40
         )
-
         if sent and getattr(sent, "document", None) and cache_key:
             RENAMED_FILE_CACHE[cache_key] = sent.document.file_id
         return True
     except Exception as e:
-        print(f"PDF rename error: {e}")
+        print("send_renamed_pdf_fast error:", e)
         raise
 
 # ============================================================================
-# 3. BOT HANDLERS (Professional Responses + PDF Rename + Clean Caption)
+# 3. BOT HANDLERS (Minimal Response + Single/Bulk Video & PDF Support)
 # ============================================================================
 @bot.message_handler(commands=["start"])
 def handle_start(message):
-    welcome_text = (
-        "👋 **Welcome to Document & Video Formatter**\n\n"
-        "Forward any **PDF Document** or **Video Lecture** to this bot:\n"
-        "• 📄 **PDF Auto-Rename**: Automatically removes tags (e.g. `_MadXABhi.pdf` → `.pdf`)\n"
-        "• 🏷️ **Clean Caption**: Formats into `🔖 Title:` and `📚 Subject:`\n"
-        "• 🚫 **Ad/Topic Removal**: Topic lines and watermark banners are completely stripped\n\n"
-        "⚡ _Forward any document or video to begin._"
+    bot.send_message(
+        message.chat.id,
+        "👋 **Welcome to TeleClean Bot!**\n\n"
+        "Send or forward any Video, PDF, Document, or Text.\n"
+        "• Ads & promotional links removed automatically\n"
+        "• Captions professionally formatted\n"
+        "• Clean filenames preserved",
+        parse_mode="Markdown"
     )
-    bot.send_message(message.chat.id, welcome_text, parse_mode="Markdown")
 
 @bot.message_handler(commands=["name"])
 def handle_name_cmd(message):
     chat_id = message.chat.id
     last_doc = LAST_DOC_BY_CHAT.get(chat_id)
     if not last_doc:
-        bot.send_message(chat_id, "⚠️ Please forward a PDF document first.")
+        bot.send_message(chat_id, "Send PDF first.")
         return
 
-    arg = re.sub(r"^/name(?:\S+)?\s*", "", message.text or "", flags=re.IGNORECASE).strip()
+    arg = re.sub(r"^/name(?:@\S+)?\s*", "", message.text or "", flags=re.IGNORECASE).strip()
+    if not arg:
+        last_doc["awaiting"] = True
+        bot.send_message(chat_id, "Send new name:")
+        return
+
+    final_name = arg if re.search(r"\.[a-z0-9]{2,5}$", arg, re.IGNORECASE) else f"{arg}{last_doc['ext']}"
+    last_doc["awaiting"] = False
+    send_renamed_pdf_fast(chat_id, last_doc["file_id"], last_doc["unique_id"], final_name, last_doc["caption"], last_doc.get("size", 0))
+
+@bot.message_handler(content_types=["video", "document", "photo", "animation", "audio"])
+def handle_media(message):
+    chat_id = message.chat.id
+    doc = message.document
+    vid = message.video
+    fname = doc.file_name if doc else (vid.file_name if vid else "")
+    raw_caption = message.caption or (f"Title: {fname}" if fname else "")
+    cleaned_caption, extracted_title = format_caption(raw_caption, fname or "")
+
+    if doc:
+        ext_m = re.search(r"(\.[a-zA-Z0-9]{2,5})$", fname or "")
+        LAST_DOC_BY_CHAT[chat_id] = {
+            "file_id": doc.file_id,
+            "unique_id": getattr(doc, "file_unique_id", ""),
+            "size": getattr(doc, "file_size", 0) or 0,
+            "ext": ext_m.group(1) if ext_m else ".pdf",
+            "caption": cleaned_caption,
+            "awaiting": False,
+        }
+        clean_name, was_modified = clean_pdf_filename(fname or "", extracted_title)
+        if was_modified and (not doc.file_size or doc.file_size <= 20 * 1024 * 1024):
+            try:
+                send_renamed_pdf_fast(chat_id, doc.file_id, getattr(doc, "file_unique_id", ""), clean_name, cleaned_caption, doc.file_size or 0)
+                return
+            except Exception as e:
+                print("PDF rename fallback to copy_message:", e)
+
+    bot.copy_message(
+        chat_id=chat_id,
+        from_chat_id=chat_id,
+        message_id=message.message_id,
+        caption=cleaned_caption,
+    )
+
+@bot.message_handler(content_types=["text"])
+def handle_text(message):
+    chat_id = message.chat.id
+    txt = (message.text or "").strip()
+    if not txt or txt.startswith("/"):
+        return
+
+    last_doc = LAST_DOC_BY_CHAT.get(chat_id)
+    if last_doc and last_doc.get("awaiting"):
+        last_doc["awaiting"] = False
+        final_name = txt if re.search(r"\.[a-z0-9]{2,5}$", txt, re.IGNORECASE) else f"{txt}{last_doc['ext']}"
+        send_renamed_pdf_fast(chat_id, last_doc["file_id"], last_doc["unique_id"], final_name, last_doc["caption"], last_doc.get("size", 0))
+        return
+
+    cleaned_caption, _ = format_caption(txt)
+    if cleaned_caption:
+        bot.send_message(chat_id, cleaned_caption)
+
+# ============================================================================
+# 4. 5-HOUR AUTO-RESTART TIMER FOR 24/7 GITHUB ACTIONS
+# ============================================================================
+def auto_shutdown_timer():
+    time.sleep(MAX_RUNTIME_SECONDS)
+    print(f"Reached {MAX_RUNTIME_SECONDS}s runtime limit. Stopping cleanly for GitHub Actions auto-restart...")
+    bot.stop_polling()
+    os._exit(0)
+
+if __name__ == "__main__":
+    print("🚀 Starting TeleClean Bot...")
+    try:
+        bot.delete_webhook(drop_pending_updates=True)
+        print("✅ Webhook cleared (clean polling ready).")
+    except Exception as e:
+        print("Webhook notice:", e)
+
+    try:
+        me = bot.get_me()
+        print(f"🤖 Connected successfully as @{me.username} ({me.first_name}) [ID: {me.id}]")
+    except Exception as e:
+        print(f"❌ Telegram connection failed: {e}")
+        print("Please check that BOT_TOKEN in GitHub Secrets is correct and valid.")
+        raise
+
+    # Set menu commands: Only /start in the Telegram bot menu
+    try:
+        bot.set_my_commands([
+            telebot.types.BotCommand("start", "Start Bot")
+        ])
+    except Exception as e:
+        print("Menu command setup notice:", e)
+
+    t = threading.Thread(target=auto_shutdown_timer, daemon=True)
+    t.start()
+
+    print("⚡ TeleClean Turbo Bot is now LIVE & listening for messages (24/7 GitHub Runner)...")
+    bot.infinity_polling(timeout=20, long_polling_timeout=20, skip_pending=False)?:\S+)?\s*", "", message.text or "", flags=re.IGNORECASE).strip()
     if not arg:
         last_doc["awaiting"] = True
         bot.send_message(chat_id, "📝 Please send the new filename:")
