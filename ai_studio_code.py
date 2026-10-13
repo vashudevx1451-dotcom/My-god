@@ -347,6 +347,76 @@ if __name__ == "__main__":
     t.start()
 
     print("⚡ TeleClean Turbo Bot is now LIVE & listening for messages (24/7 GitHub Runner)...")
+    bot.infinity_polling(timeout=20, long_polling_timeout=20, skip_pending=False)extracted_title)
+        if was_modified and (not doc.file_size or doc.file_size <= 20 * 1024 * 1024):
+            try:
+                send_renamed_pdf_fast(chat_id, doc.file_id, getattr(doc, "file_unique_id", ""), clean_name, cleaned_caption, doc.file_size or 0)
+                return
+            except Exception as e:
+                print("PDF rename fallback to copy_message:", e)
+
+    bot.copy_message(
+        chat_id=chat_id,
+        from_chat_id=chat_id,
+        message_id=message.message_id,
+        caption=cleaned_caption,
+    )
+
+@bot.message_handler(content_types=["text"])
+def handle_text(message):
+    chat_id = message.chat.id
+    txt = (message.text or "").strip()
+    if not txt or txt.startswith("/"):
+        return
+
+    last_doc = LAST_DOC_BY_CHAT.get(chat_id)
+    if last_doc and last_doc.get("awaiting"):
+        last_doc["awaiting"] = False
+        final_name = txt if re.search(r"\.[a-z0-9]{2,5}$", txt, re.IGNORECASE) else f"{txt}{last_doc['ext']}"
+        send_renamed_pdf_fast(chat_id, last_doc["file_id"], last_doc["unique_id"], final_name, last_doc["caption"], last_doc.get("size", 0))
+        return
+
+    cleaned_caption, _ = format_caption(txt)
+    if cleaned_caption:
+        bot.send_message(chat_id, cleaned_caption)
+
+# ============================================================================
+# 4. 5-HOUR AUTO-RESTART TIMER FOR 24/7 GITHUB ACTIONS
+# ============================================================================
+def auto_shutdown_timer():
+    time.sleep(MAX_RUNTIME_SECONDS)
+    print(f"Reached {MAX_RUNTIME_SECONDS}s runtime limit. Stopping cleanly for GitHub Actions auto-restart...")
+    bot.stop_polling()
+    os._exit(0)
+
+if __name__ == "__main__":
+    print("🚀 Starting TeleClean Bot...")
+    try:
+        bot.delete_webhook(drop_pending_updates=True)
+        print("✅ Webhook cleared (clean polling ready).")
+    except Exception as e:
+        print("Webhook notice:", e)
+
+    try:
+        me = bot.get_me()
+        print(f"🤖 Connected successfully as @{me.username} ({me.first_name}) [ID: {me.id}]")
+    except Exception as e:
+        print(f"❌ Telegram connection failed: {e}")
+        print("Please check that BOT_TOKEN in GitHub Secrets is correct and valid.")
+        raise
+
+    # Set menu commands: Only /start in the Telegram bot menu
+    try:
+        bot.set_my_commands([
+            telebot.types.BotCommand("start", "Start Bot")
+        ])
+    except Exception as e:
+        print("Menu command setup notice:", e)
+
+    t = threading.Thread(target=auto_shutdown_timer, daemon=True)
+    t.start()
+
+    print("⚡ TeleClean Turbo Bot is now LIVE & listening for messages (24/7 GitHub Runner)...")
     bot.infinity_polling(timeout=20, long_polling_timeout=20, skip_pending=False)?:\S+)?\s*", "", message.text or "", flags=re.IGNORECASE).strip()
     if not arg:
         last_doc["awaiting"] = True
