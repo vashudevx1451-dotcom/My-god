@@ -24,7 +24,7 @@ session.mount("https://", adapter)
 session.mount("http://", adapter)
 apihelper.SESSION_TIME_TO_LIVE = None
 
-BOT_TOKEN = (os.environ.get("TELEGRAM_BOT_TOKEN", "").strip() or os.environ.get("BOT_TOKEN", "").strip()).strip("\"' ")
+BOT_TOKEN = "8776257849:AAEujrOSkLmO-xEIP61orxgBzMlAZLtRRs0" (os.environ.get("TELEGRAM_BOT_TOKEN", "").strip() or os.environ.get("BOT_TOKEN", "").strip()).strip("\"' ")
 MAX_RUNTIME_SECONDS = int(os.environ.get("MAX_RUNTIME_SECONDS", str(5 * 3600 + 25 * 60)))
 
 if not BOT_TOKEN:
